@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Scanner E-ABSENSI</title>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-screen bg-slate-950 text-white">
+<main class="max-w-md mx-auto min-h-screen p-4 flex flex-col">
+  <div class="text-center py-4">
+    <h1 class="text-xl font-bold">Scanner E-ABSENSI</h1>
+    <p class="text-xs text-slate-400 mt-1">Arahkan kamera ke QR anggota</p>
+  </div>
+  <div class="bg-white rounded-2xl overflow-hidden shadow-2xl">
+    <div id="reader" class="w-full"></div>
+  </div>
+  <div id="status" class="mt-4 rounded-xl p-4 bg-slate-800 text-sm text-center">Memulai kamera...</div>
+  <button id="closeBtn" class="mt-4 w-full py-3 rounded-xl bg-slate-700 hover:bg-slate-600 font-semibold">Tutup Scanner</button>
+  <p class="text-[11px] text-slate-500 text-center mt-auto pt-6">E-ABSENSI Scanner</p>
+</main>
+<script>
+(() => {
+  const params = new URLSearchParams(window.location.search);
+  const token = params.get("token") || "";
+  const mode = params.get("mode") === "user" ? "user" : "environment";
+  let scanner = null, sent = false;
+  const statusEl = document.getElementById("status");
+
+  function setStatus(text, type="normal") {
+    statusEl.textContent = text;
+    statusEl.className = "mt-4 rounded-xl p-4 text-sm text-center " +
+      (type === "error" ? "bg-red-900/60 text-red-200" :
+       type === "success" ? "bg-emerald-900/60 text-emerald-200" :
+       "bg-slate-800 text-slate-200");
+  }
+
+  function post(type, payload={}) {
+    if (window.opener) {
+      window.opener.postMessage({type, token, ...payload}, "*");
+    }
+  }
+
+  async function stopScanner() {
+    if (!scanner) return;
+    try { await scanner.stop(); } catch (_) {}
+    try { scanner.clear(); } catch (_) {}
+    scanner = null;
+  }
+
+  async function startScanner() {
+    if (!window.isSecureContext) {
+      const message = "Scanner harus dibuka melalui HTTPS.";
+      setStatus(message, "error");
+      post("EABSENSI_SCANNER_ERROR", {message});
+      return;
+    }
+
+    if (!window.opener) {
+      setStatus("Scanner harus dibuka dari aplikasi E-ABSENSI.", "error");
+      return;
+    }
+
+    scanner = new Html5Qrcode("reader");
+
+    try {
+      await scanner.start(
+        {facingMode: mode},
+        {fps:10, qrbox:{width:250,height:250}, aspectRatio:1.0},
+        async (decodedText) => {
+          if (sent) return;
+          const value = String(decodedText || "").trim();
+          if (!value) return;
+
+          sent = true;
+          setStatus("QR terbaca. Mengirim data...", "success");
+          post("EABSENSI_QR", {value});
+          await stopScanner();
+
+          setTimeout(() => {
+            try { window.close(); } catch (_) {}
+          }, 400);
+        },
+        () => {}
+      );
+
+      setStatus(
+        mode === "user"
+          ? "Kamera depan aktif. Arahkan ke QR."
+          : "Kamera belakang aktif. Arahkan ke QR.",
+        "success"
+      );
+      post("EABSENSI_SCANNER_READY");
+
+    } catch (err) {
+      const message = err && err.message ? err.message : String(err);
+      setStatus("Gagal mengakses kamera: " + message, "error");
+      post("EABSENSI_SCANNER_ERROR", {message});
+    }
+  }
+
+  document.getElementById("closeBtn").addEventListener("click", async () => {
+    await stopScanner();
+    try { window.close(); } catch (_) {}
+  });
+
+  window.addEventListener("beforeunload", () => {
+    if (scanner) scanner.stop().catch(() => {});
+  });
+
+  startScanner();
+})();
+</script>
+</body>
+</html>
